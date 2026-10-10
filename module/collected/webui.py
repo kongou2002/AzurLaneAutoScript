@@ -1,9 +1,7 @@
 """
 "Collected" page in the Alas GUI. Imported once at the end of module/webui/app.py.
 """
-import io
 import os
-import time
 from datetime import datetime, timedelta, timezone
 
 from pywebio.output import (clear, output, put_buttons, put_collapse, put_column, put_html, put_image,
@@ -67,14 +65,17 @@ def day_start(days_ago=0):
 
 
 def thumbnail(path, width=320):
+    # The GUI process replaces PIL with module/webui/fake_pil_module.py, use cv2 instead
     try:
-        from PIL import Image
-        with Image.open(path) as im:
-            im = im.convert('RGB')
-            im.thumbnail((width, width))
-            buf = io.BytesIO()
-            im.save(buf, format='JPEG', quality=80)
-            return buf.getvalue()
+        import cv2
+        image = cv2.imread(path)
+        if image is None:
+            return None
+        h, w = image.shape[:2]
+        if w > width:
+            image = cv2.resize(image, (width, int(h * width / w)), interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return buf.tobytes() if ok else None
     except Exception as e:
         logger.warning(f'Collected: cannot read ship image {path}: {e!r}')
         return None
