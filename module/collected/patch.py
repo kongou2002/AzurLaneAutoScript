@@ -16,6 +16,8 @@ from module.collected.store import CollectedStore
 SHIP_IMAGE_FOLDER = './screenshots/ships'
 # Read coins alongside oil at most this often (seconds)
 COIN_READ_INTERVAL = 600
+# Read oil and coins from the top bar of other pages at most this often (seconds)
+TOP_BAR_INTERVAL = 300
 # Wait at most this long for the get-ship animation before Alas clicks it away (seconds)
 SHIP_ANIMATION_WAIT = 4
 # Ship name box on the get-ship screen, drawn last and dark once the animation finishes
@@ -26,6 +28,7 @@ _store_pid = None
 _store_lock = threading.Lock()
 _last_instance = ''
 _meow = {'coins': 0, 'count': 0}
+_top_bar_read = {}
 
 
 def store():
@@ -89,6 +92,27 @@ def on_get_oil(main, result, args, kwargs):
     # Same sanity bound as CampaignStatus.get_coin()
     if coin >= 100:
         store().record_resource(inst, 'coin', coin, 'campaign')
+
+
+def on_page_arrive(main, result, args, kwargs):
+    # Alas reads oil and coins on campaign pages only, so spending in tasks like Research and
+    # Tactical, and income from Commission, went unseen. Most pages share the campaign top bar:
+    # read it from the screenshot Alas just used to recognise the page, if the oil icon is there.
+    inst = instance_of(main)
+    now = time.time()
+    if now - _top_bar_read.get(inst, 0) < TOP_BAR_INTERVAL:
+        return
+    from module.campaign.assets import OCR_OIL_CHECK
+    if not main.appear(OCR_OIL_CHECK, offset=(10, 2)):
+        return
+    _top_bar_read[inst] = now
+    from module.campaign import campaign_status
+    source = str(getattr(main, 'ui_current', '') or 'ui')
+    store().record_resource(inst, 'oil', campaign_status.CampaignStatus._get_oil(main), source)
+    coin = campaign_status.OCR_COIN.ocr(main.device.image)
+    # Same sanity bound as CampaignStatus.get_coin()
+    if coin >= 100:
+        store().record_resource(inst, 'coin', coin, source)
 
 
 def on_gacha_run(main, result, args, kwargs):
@@ -219,6 +243,8 @@ HOOKS = [
      resource('os_purple_coin', 'opsi')),
     ('os_action_point', 'module.os_handler.action_point', 'ActionPointHandler', 'action_point_update',
      resource('os_action_point', 'opsi', value_from=action_point_value)),
+    ('page_goto', 'module.ui.ui', 'UI', 'ui_goto', on_page_arrive),
+    ('page_detect', 'module.ui.ui', 'UI', 'ui_get_current_page', on_page_arrive),
     ('ship', 'module.combat.combat', 'Combat', 'handle_get_ship', on_get_ship),
     ('shop_buy', 'module.shop.clerk', 'ShopClerk', 'shop_buy_execute', on_shop_buy),
     ('voucher_buy', 'module.shop.shop_voucher', 'VoucherShop', 'shop_buy_execute', on_shop_buy),

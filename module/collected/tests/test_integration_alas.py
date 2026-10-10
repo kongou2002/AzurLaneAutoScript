@@ -86,6 +86,48 @@ class TestAlasIntegration(unittest.TestCase):
         self.assertEqual(latest, {'oil': 8990, 'coin': 52000})
         self.assertEqual(len(calls), 1)
 
+    def top_bar_main(self, name, icon=True, oil=2000, coin=30000):
+        import module.campaign.campaign_status as cs
+        calls = []
+
+        def fake_oil(main):
+            calls.append('oil')
+            return oil
+
+        class FakeCoin:
+            def ocr(self, image):
+                calls.append('coin')
+                return coin
+
+        main = SimpleNamespace(config=SimpleNamespace(config_name=name, task=None),
+                               device=SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8)),
+                               appear=lambda button, offset=0: icon, ui_current='page_research')
+        self.addCleanup(setattr, cs.CampaignStatus, '_get_oil', cs.CampaignStatus._get_oil)
+        self.addCleanup(setattr, cs, 'OCR_COIN', cs.OCR_COIN)
+        cs.CampaignStatus._get_oil = fake_oil
+        cs.OCR_COIN = FakeCoin()
+        return main, calls
+
+    def test_top_bar_read_on_page_arrive(self):
+        main, calls = self.top_bar_main('bar_test')
+        self.patch.on_page_arrive(main, None, (), {})
+        self.patch.on_page_arrive(main, None, (), {})  # within interval: no second read
+        latest = {r['key']: r['latest'] for r in self.patch.store().resource_summary('bar_test', 0, 0)}
+        self.assertEqual(latest, {'oil': 2000, 'coin': 30000})
+        self.assertEqual(calls, ['oil', 'coin'])
+
+    def test_top_bar_skipped_without_oil_icon(self):
+        main, calls = self.top_bar_main('bar_none', icon=False)
+        self.patch.on_page_arrive(main, None, (), {})
+        self.assertEqual(calls, [])
+        self.assertEqual(self.patch.store().resource_summary('bar_none', 0, 0), [])
+
+    def test_top_bar_rejects_bad_coin(self):
+        main, calls = self.top_bar_main('bar_bad', coin=0)
+        self.patch.on_page_arrive(main, None, (), {})
+        latest = {r['key']: r['latest'] for r in self.patch.store().resource_summary('bar_bad', 0, 0)}
+        self.assertEqual(latest, {'oil': 2000})
+
     def ship_screen(self, animating):
         # Get-ship screen: light background, the name box is dark once the animation finishes
         image = np.full((720, 1280, 3), 200, dtype=np.uint8)
@@ -141,6 +183,10 @@ class TestAlasIntegration(unittest.TestCase):
             self.patch.ship_card_animating(main.device.image)) or True
         main.appear = lambda button, offset=0: button.name == 'GET_SHIP'
         self.patch.SHIP_IMAGE_FOLDER = os.path.join(self.tmp, 'ships')
+        # Saving runs in a thread and the GUI test may have swapped PIL for a fake one
+        import module.base.utils as utils
+        self.addCleanup(setattr, utils, 'save_image', utils.save_image)
+        utils.save_image = lambda image, file: None
         self.assertTrue(main.handle_get_ship())
         self.assertEqual(clicked_on, [False])
         self.assertEqual(len(self.patch.store().ships('ship_test')), 1)

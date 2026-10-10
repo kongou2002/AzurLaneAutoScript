@@ -59,6 +59,31 @@ SHIP_DEDUPE = 6
 DEFAULT_PATH = './config/collected.db'
 
 
+def flow(points, since):
+    """
+    Sum increases and decreases between readings from `since`, starting from the
+    last reading before it (or the first one after it).
+    It is a lower bound: income and spending between two readings cancel out.
+
+    Args:
+        points (list[tuple[float, int]]): (ts, value), oldest first
+        since (float):
+
+    Returns:
+        tuple[int, int]: income, spent
+    """
+    before = [v for ts, v in points if ts < since]
+    after = [v for ts, v in points if ts >= since]
+    values = before[-1:] + after
+    income = spent = 0
+    for prev, value in zip(values, values[1:]):
+        if value > prev:
+            income += value - prev
+        else:
+            spent += prev - value
+    return income, spent
+
+
 class CollectedStore:
     def __init__(self, path=None):
         if path is None:
@@ -164,45 +189,31 @@ class CollectedStore:
             'UNION SELECT instance FROM purchase')
         return sorted(r['instance'] for r in rows)
 
-    def _value_at_or_before(self, instance, key, ts):
-        rows = self._query(
-            'SELECT value FROM resource WHERE instance=? AND key=? AND ts<? ORDER BY ts DESC LIMIT 1',
-            instance, key, ts)
-        if rows:
-            return rows[0]['value']
-        rows = self._query(
-            'SELECT value FROM resource WHERE instance=? AND key=? AND ts>=? ORDER BY ts ASC LIMIT 1',
-            instance, key, ts)
-        return rows[0]['value'] if rows else None
-
     def resource_summary(self, instance, day_start, week_start):
         """
         Returns:
-            list[dict]: key, latest, latest_ts, first_ts, delta_today, delta_week, delta_all
+            list[dict]: key, latest, latest_ts, first_ts,
+                and for each period in (today, week, all): delta_<p>, income_<p>, spent_<p>
         """
+        rows = self._query(
+            'SELECT key, ts, value FROM resource WHERE instance=? ORDER BY key, ts', instance)
+        series = {}
+        for r in rows:
+            series.setdefault(r['key'], []).append((r['ts'], r['value']))
         out = []
-        keys = self._query(
-            'SELECT key, MIN(ts) AS first_ts, MAX(ts) AS latest_ts FROM resource '
-            'WHERE instance=? GROUP BY key ORDER BY key', instance)
-        for k in keys:
-            key = k['key']
-            latest = self._query(
-                'SELECT value FROM resource WHERE instance=? AND key=? ORDER BY ts DESC LIMIT 1',
-                instance, key)[0]['value']
-            first = self._query(
-                'SELECT value FROM resource WHERE instance=? AND key=? ORDER BY ts ASC LIMIT 1',
-                instance, key)[0]['value']
-            base_today = self._value_at_or_before(instance, key, day_start)
-            base_week = self._value_at_or_before(instance, key, week_start)
-            out.append({
+        for key, points in series.items():
+            row = {
                 'key': key,
-                'latest': latest,
-                'latest_ts': k['latest_ts'],
-                'first_ts': k['first_ts'],
-                'delta_today': latest - base_today if base_today is not None else 0,
-                'delta_week': latest - base_week if base_week is not None else 0,
-                'delta_all': latest - first,
-            })
+                'latest': points[-1][1],
+                'latest_ts': points[-1][0],
+                'first_ts': points[0][0],
+            }
+            for period, since in [('today', day_start), ('week', week_start), ('all', points[0][0])]:
+                income, spent = flow(points, since)
+                row[f'income_{period}'] = income
+                row[f'spent_{period}'] = spent
+                row[f'delta_{period}'] = income - spent
+            out.append(row)
         return out
 
     def resource_daily(self, instance, key, tz_offset_hours=0):

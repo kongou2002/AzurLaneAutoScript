@@ -128,6 +128,26 @@ class TestQueries(StoreTestBase):
         self.assertEqual(row['delta_today'], 300)
         self.assertEqual(row['delta_week'], 300)
 
+    def test_resource_summary_income_and_spent(self):
+        s = self.store
+        s.record_resource(INST, 'coin', 30000, now=T0 - 60)  # baseline before today
+        s.record_resource(INST, 'coin', 31000, now=T0 + 10)  # +1000 battles
+        s.record_resource(INST, 'coin', 25000, now=T0 + 20)  # -6000 research
+        s.record_resource(INST, 'coin', 25500, now=T0 + 30)  # +500
+        row = s.resource_summary(INST, day_start=T0, week_start=T0 - 7 * 86400)[0]
+        self.assertEqual((row['income_today'], row['spent_today'], row['delta_today']), (1500, 6000, -4500))
+        self.assertEqual((row['income_all'], row['spent_all'], row['delta_all']), (1500, 6000, -4500))
+
+    def test_income_and_spent_without_earlier_value(self):
+        s = self.store
+        s.record_resource(INST, 'oil', 4000, now=T0 + 10)
+        s.record_resource(INST, 'oil', 3700, now=T0 + 20)
+        s.record_resource(INST, 'oil', 3900, now=T0 + 30)
+        row = s.resource_summary(INST, day_start=T0 + 15, week_start=T0)[0]
+        # Today starts from the last value before the boundary
+        self.assertEqual((row['income_today'], row['spent_today']), (200, 300))
+        self.assertEqual((row['income_week'], row['spent_week']), (200, 300))
+
     def test_resource_daily_last_value_per_day(self):
         s = self.store
         s.record_resource(INST, 'oil', 1000, now=T0)
