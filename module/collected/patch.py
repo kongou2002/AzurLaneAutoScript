@@ -2,7 +2,8 @@
 Hook Alas to record collected stats. Imported once at the top of alas.py.
 
 Every hook only reads values Alas has already computed, runs after the original
-method returns, and never raises into Alas.
+method returns, and never raises into Alas. The one exception is before_get_ship(),
+which takes extra screenshots before Alas closes the get-ship screen.
 """
 import os
 import sys
@@ -15,6 +16,10 @@ from module.collected.store import CollectedStore
 SHIP_IMAGE_FOLDER = './screenshots/ships'
 # Read coins alongside oil at most this often (seconds)
 COIN_READ_INTERVAL = 600
+# Wait at most this long for the get-ship animation before Alas clicks it away (seconds)
+SHIP_ANIMATION_WAIT = 4
+# Ship name box on the get-ship screen, drawn last and dark once the animation finishes
+SHIP_NAME_BOX = (160, 575, 1000, 680)
 
 _store = None
 _store_pid = None
@@ -110,6 +115,27 @@ def on_meow_confirm(main, result, args, kwargs):
     _meow['count'] = 0
 
 
+def ship_card_animating(image):
+    """
+    GET_SHIP matches as soon as the get-ship screen starts, while the ship is still sliding in.
+    A bright name box means the card is not drawn yet. Measured on 13 real screenshots:
+    finished cards are 60~70, unfinished ones 160~230.
+    """
+    from module.base.utils import crop, rgb2gray
+    return rgb2gray(crop(image, SHIP_NAME_BOX, copy=False)).mean() > 120
+
+
+def before_get_ship(main, args, kwargs):
+    # Alas clicks GET_SHIP on its first match, which closes the screen mid-animation.
+    # Take more screenshots until the card is drawn, so on_get_ship() saves a picture of the ship.
+    from module.combat.assets import GET_SHIP
+    if not main.appear(GET_SHIP, offset=(20, 20)):
+        return
+    deadline = time.time() + SHIP_ANIMATION_WAIT
+    while ship_card_animating(main.device.image) and time.time() < deadline:
+        main.device.screenshot()
+
+
 def on_get_ship(main, result, args, kwargs):
     if not result:
         return
@@ -200,6 +226,10 @@ HOOKS = [
     ('event_shop_buy', 'module.shop_event.clerk', 'EventShopClerk', 'event_shop_buy_item_execute',
      on_event_shop_buy),
 ]
+# Hook name -> handler(self, args, kwargs) that runs before the original method
+BEFORE_HOOKS = {
+    'ship': before_get_ship,
+}
 
 
 def _register(name, module_name, class_name, method, handler):
@@ -213,7 +243,7 @@ def _register(name, module_name, class_name, method, handler):
             store().set_hook(name, 'missing', f'{module_name}.{class_name} not found')
             hooks._report(f'Collected: hook {name} missing class {module_name}.{class_name}')
             return
-        if hooks.wrap_method(cls, method, touch_then_handle):
+        if hooks.wrap_method(cls, method, touch_then_handle, before=BEFORE_HOOKS.get(name)):
             store().set_hook(name, 'ok', f'{class_name}.{method}')
         else:
             store().set_hook(name, 'missing', f'{class_name}.{method} not found')

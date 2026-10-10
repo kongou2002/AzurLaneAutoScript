@@ -104,6 +104,25 @@ class TestWrapMethod(unittest.TestCase):
         Target().get(1)
         self.assertEqual(seen, [1])
 
+    def test_before_runs_before_original(self):
+        seen = []
+        hooks.wrap_method(Target, 'get', lambda self, result, args, kwargs: seen.append(('after', result)),
+                          before=lambda self, args, kwargs: seen.append(('before', args)))
+        self.assertEqual(Target().get(4), 8)
+        self.assertEqual(seen, [('before', (4,)), ('after', 8)])
+
+    def test_before_only(self):
+        seen = []
+        hooks.wrap_method(Target, 'static', before=lambda self, args, kwargs: seen.append((self, args)))
+        self.assertEqual(Target.static(1), 2)
+        self.assertEqual(seen, [(None, (1,))])
+
+    def test_error_in_before_is_swallowed(self):
+        errors = []
+        hooks.wrap_method(Target, 'get', before=lambda *a: 1 / 0, on_error=errors.append)
+        self.assertEqual(Target().get(3), 6)
+        self.assertEqual(len(errors), 1)
+
     def test_original_exception_propagates_without_after(self):
         seen = []
 
