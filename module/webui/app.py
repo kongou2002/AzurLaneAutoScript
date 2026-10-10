@@ -1554,3 +1554,6 @@ def app():
     )
 
     return app
+
+
+import module.collected.webui  # noqa: E402,F401  Collected page, needs AlasGUI defined above
