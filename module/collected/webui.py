@@ -2,6 +2,7 @@
 "Collected" page in the Alas GUI. Imported once at the end of module/webui/app.py.
 """
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 from pywebio.output import (clear, output, put_buttons, put_collapse, put_column, put_html, put_image,
@@ -16,6 +17,8 @@ from module.webui.app import AlasGUI
 # Day boundaries and timestamps are shown in the user's timezone (Vietnam, UTC+7)
 DISPLAY_TZ = timezone(timedelta(hours=7))
 SHIP_GALLERY = 12
+# A reading older than this is greyed out as possibly outdated (seconds)
+STALE_AFTER = 3600
 
 ICON = """<svg class="aside-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
  stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l9-5 9 5v8l-9 5-9-5z"/><path d="M3 8l9 5 9-5"/>
@@ -56,6 +59,26 @@ def fmt_delta(n):
     if not n:
         return '0'
     return f'{n:+,}'
+
+
+def fmt_flow(row, period):
+    """
+    Income and spending above the net change, e.g. "+17,347 / -6,000" then "net +11,347"
+    """
+    income, spent, net = row[f'income_{period}'], row[f'spent_{period}'], row[f'delta_{period}']
+    return put_html(
+        f'<span style="color:#28a745">+{income:,}</span> / <span style="color:#dc3545">-{spent:,}</span>'
+        f'<br><small style="color:#6c757d">net {fmt_delta(net)}</small>')
+
+
+def fmt_current(row, now=None):
+    now = time.time() if now is None else now
+    text = f"{row['latest']:,}"
+    age = now - row['latest_ts']
+    if age > STALE_AFTER:
+        return put_html(f'<span style="color:#adb5bd" title="Read {int(age // 60)} minutes ago, may be outdated">'
+                        f'{text}</span><br><small style="color:#adb5bd">{int(age // 3600)}h ago</small>')
+    return text
 
 
 def day_start(days_ago=0):
@@ -129,10 +152,12 @@ class CollectedPage:
                 put_text('No resource readings yet.')
                 return
             first = min(r['first_ts'] for r in rows)
-            put_text(f'Tracking since {fmt_ts(first)} (UTC+7). Changes are net: income minus spending.')
+            put_text(f'Tracking since {fmt_ts(first)} (UTC+7). Each period shows income / spending between '
+                     f'readings, then the net change. Income and spending between two readings cancel out, '
+                     f'so both are minimums. Grey values are over an hour old.')
             put_table(
-                [[label(r['key']), f"{r['latest']:,}", fmt_delta(r['delta_today']), fmt_delta(r['delta_week']),
-                  fmt_delta(r['delta_all']), fmt_ts(r['latest_ts'])] for r in rows],
+                [[label(r['key']), fmt_current(r), fmt_flow(r, 'today'), fmt_flow(r, 'week'),
+                  fmt_flow(r, 'all'), fmt_ts(r['latest_ts'])] for r in rows],
                 header=['Resource', 'Current', 'Today', '7 days', 'Since start', 'Last read'])
 
     def render_chart(self):
