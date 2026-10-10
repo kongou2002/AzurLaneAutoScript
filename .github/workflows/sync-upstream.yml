@@ -1,0 +1,68 @@
+# Keep alas-custom up to date with LmeSzinc/AzurLaneAutoScript master.
+# alas-custom is the branch the mini PC deploys from (config/deploy.yaml -> Branch).
+# Always merge, never rebase or force push: Alas updater skips updates when the
+# local commit cannot be found in origin ("Cannot find local commit in upstream").
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Branch to sync (for testing)
+        default: alas-custom
+
+permissions:
+  contents: write
+
+env:
+  TARGET: ${{ inputs.target || 'alas-custom' }}
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET }}
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/LmeSzinc/AzurLaneAutoScript.git
+          git fetch --no-tags upstream master
+
+      - name: Check new upstream commits
+        id: check
+        run: |
+          count=$(git rev-list --count HEAD..upstream/master)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "New upstream commits: $count"
+          git log --oneline --no-merges HEAD..upstream/master | head -50
+
+      - name: Update master mirror
+        if: steps.check.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/merge-upstream" -f branch=master \
+            || echo "::warning::merge-upstream on master failed"
+
+      - name: Merge upstream into target branch
+        if: steps.check.outputs.count != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git merge --no-edit upstream/master; then
+            echo "::error::Merge conflict between $TARGET and upstream/master"
+            git diff --name-only --diff-filter=U
+            git merge --abort
+            exit 1
+          fi
+          git push origin "HEAD:$TARGET"
