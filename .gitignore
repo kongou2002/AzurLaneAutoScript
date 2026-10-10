@@ -17,6 +17,7 @@ dev_tools/debug_tools
 *.lock
 config/reloadflag
 config/reloadalas
+config/collected.db*
 test.py
 test/
 
