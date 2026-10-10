@@ -64,6 +64,28 @@ class TestAlasIntegration(unittest.TestCase):
         self.assertEqual((rows[0]['shop'], rows[0]['item'], rows[0]['amount'], rows[0]['balance']),
                          ('ShopFrequent', 'Cube', 2, 12345))
 
+    def test_oil_hook_reads_coin_from_same_screenshot(self):
+        import module.campaign.campaign_status as cs
+        calls = []
+
+        class FakeOcr:
+            def ocr(self, image):
+                calls.append(1)
+                return 52000
+
+        real = cs.OCR_COIN
+        cs.OCR_COIN = FakeOcr()
+        try:
+            main = SimpleNamespace(config=SimpleNamespace(config_name='coin_test', task=None),
+                                   device=SimpleNamespace(image=np.zeros((720, 1280, 3), dtype=np.uint8)))
+            self.patch.on_get_oil(main, 9000, (), {})
+            self.patch.on_get_oil(main, 8990, (), {})  # within interval: no second OCR
+        finally:
+            cs.OCR_COIN = real
+        latest = {r['key']: r['latest'] for r in self.patch.store().resource_summary('coin_test', 0, 0)}
+        self.assertEqual(latest, {'oil': 8990, 'coin': 52000})
+        self.assertEqual(len(calls), 1)
+
     def test_gui_page_installed(self):
         from module.webui.app import AlasGUI
         self.assertTrue(getattr(AlasGUI.set_aside, '__collected_wrapped__', False))

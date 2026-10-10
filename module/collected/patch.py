@@ -13,6 +13,8 @@ from module.collected import hooks
 from module.collected.store import CollectedStore
 
 SHIP_IMAGE_FOLDER = './screenshots/ships'
+# Read coins alongside oil at most this often (seconds)
+COIN_READ_INTERVAL = 600
 
 _store = None
 _store_pid = None
@@ -68,6 +70,20 @@ def resource(key, source='', value_from=None, key_from=None):
 def event_key(main):
     event = getattr(main.config, 'Campaign_Event', '') or 'unknown'
     return f'event_pt@{event}'
+
+
+def on_get_oil(main, result, args, kwargs):
+    inst = instance_of(main)
+    store().record_resource(inst, 'oil', result, 'campaign')
+    # Coins sit next to oil on the same top bar, but Alas only reads them for the task balancer.
+    # Read them from the screenshot get_oil() just used, at most once per interval.
+    if store().seconds_since(inst, 'coin') < COIN_READ_INTERVAL:
+        return
+    from module.campaign import campaign_status
+    coin = campaign_status.OCR_COIN.ocr(main.device.image)
+    # Same sanity bound as CampaignStatus.get_coin()
+    if coin >= 100:
+        store().record_resource(inst, 'coin', coin, 'campaign')
 
 
 def on_gacha_run(main, result, args, kwargs):
@@ -149,7 +165,7 @@ def action_point_value(main, result, args):
 
 # (hook name, module, class, method, handler)
 HOOKS = [
-    ('oil', 'module.campaign.campaign_status', 'CampaignStatus', 'get_oil', resource('oil', 'campaign')),
+    ('oil', 'module.campaign.campaign_status', 'CampaignStatus', 'get_oil', on_get_oil),
     ('coin', 'module.campaign.campaign_status', 'CampaignStatus', 'get_coin', resource('coin', 'campaign')),
     ('event_pt', 'module.campaign.campaign_status', 'CampaignStatus', 'get_event_pt',
      resource('', 'event', key_from=event_key)),
@@ -166,6 +182,7 @@ HOOKS = [
      resource('guild_coin', 'shop')),
     ('core', 'module.shop.shop_status', 'ShopStatus', 'status_get_core', resource('core', 'shop')),
     ('voucher', 'module.shop.shop_status', 'ShopStatus', 'status_get_voucher', resource('voucher', 'shop')),
+    ('shipyard_coin', 'module.shipyard.ui', 'ShipyardUI', '_shipyard_get_coin', resource('coin', 'shipyard')),
     ('gacha', 'module.gacha.gacha_reward', 'RewardGacha', 'gacha_run', on_gacha_run),
     ('meow_coin', 'module.meowfficer.buy', 'MeowfficerBuy', '_meow_get_buy_count', on_meow_get_buy_count),
     ('meow_choose', 'module.meowfficer.buy', 'MeowfficerBuy', 'meow_choose', on_meow_choose),
