@@ -63,6 +63,15 @@ class TestRecordResource(StoreTestBase):
         self.assertTrue(self.store.record_resource('alas2', 'oil', 9000, now=T0 + 1))
 
 
+class TestSecondsSince(StoreTestBase):
+    def test_never_recorded_is_infinite(self):
+        self.assertEqual(self.store.seconds_since(INST, 'coin', now=T0), float('inf'))
+
+    def test_seconds_since_last_record(self):
+        self.store.record_resource(INST, 'coin', 50000, now=T0)
+        self.assertEqual(self.store.seconds_since(INST, 'coin', now=T0 + 42), 42)
+
+
 class TestRecordShip(StoreTestBase):
     def test_ship_recorded(self):
         self.assertTrue(self.store.record_ship(INST, True, '12-4', 'a.png', now=T0))

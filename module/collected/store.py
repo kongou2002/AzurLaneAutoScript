@@ -150,6 +150,14 @@ class CollectedStore:
     Reads
     """
 
+    def seconds_since(self, instance, key, now=None):
+        now = time.time() if now is None else now
+        rows = self._query(
+            'SELECT MAX(ts) AS ts FROM resource WHERE instance=? AND key=?', instance, key)
+        if not rows or rows[0]['ts'] is None:
+            return float('inf')
+        return now - rows[0]['ts']
+
     def instances(self):
         rows = self._query(
             'SELECT instance FROM resource UNION SELECT instance FROM ship '
