@@ -86,6 +86,65 @@ class TestAlasIntegration(unittest.TestCase):
         self.assertEqual(latest, {'oil': 8990, 'coin': 52000})
         self.assertEqual(len(calls), 1)
 
+    def ship_screen(self, animating):
+        # Get-ship screen: light background, the name box is dark once the animation finishes
+        image = np.full((720, 1280, 3), 200, dtype=np.uint8)
+        if not animating:
+            image[575:680, 160:1000] = 40
+        return image
+
+    def test_ship_card_animating(self):
+        self.assertTrue(self.patch.ship_card_animating(self.ship_screen(animating=True)))
+        self.assertFalse(self.patch.ship_card_animating(self.ship_screen(animating=False)))
+
+    def fake_ship_main(self, frames, get_ship=True):
+        main = SimpleNamespace(appear=lambda button, offset=0: get_ship, shots=0)
+
+        def screenshot():
+            main.shots += 1
+            main.device.image = frames[min(main.shots, len(frames) - 1)]
+            return main.device.image
+
+        main.device = SimpleNamespace(image=frames[0], screenshot=screenshot)
+        return main
+
+    def test_before_get_ship_waits_for_animation(self):
+        main = self.fake_ship_main([self.ship_screen(True), self.ship_screen(True), self.ship_screen(False)])
+        self.patch.before_get_ship(main, (), {})
+        self.assertEqual(main.shots, 2)
+        self.assertFalse(self.patch.ship_card_animating(main.device.image))
+
+    def test_before_get_ship_gives_up_after_timeout(self):
+        real = self.patch.SHIP_ANIMATION_WAIT
+        self.patch.SHIP_ANIMATION_WAIT = 0.2
+        try:
+            main = self.fake_ship_main([self.ship_screen(True)])
+            self.patch.before_get_ship(main, (), {})
+        finally:
+            self.patch.SHIP_ANIMATION_WAIT = real
+        self.assertGreater(main.shots, 0)
+
+    def test_before_get_ship_ignores_other_screens(self):
+        main = self.fake_ship_main([self.ship_screen(True)], get_ship=False)
+        self.patch.before_get_ship(main, (), {})
+        self.assertEqual(main.shots, 0)
+
+    def test_ship_hook_waits_before_alas_clicks(self):
+        from module.combat.combat import Combat
+        fake = self.fake_ship_main([self.ship_screen(True), self.ship_screen(False)])
+        main = object.__new__(Combat)
+        main.__dict__.update(vars(fake))
+        main.device = fake.device
+        main.config = SimpleNamespace(config_name='ship_test', task=None, Campaign_Name='d3')
+        clicked_on = []
+        main.appear_then_click = lambda button, offset=0, interval=0: clicked_on.append(
+            self.patch.ship_card_animating(main.device.image)) or True
+        main.appear = lambda button, offset=0: button.name == 'GET_SHIP'
+        self.patch.SHIP_IMAGE_FOLDER = os.path.join(self.tmp, 'ships')
+        self.assertTrue(main.handle_get_ship())
+        self.assertEqual(clicked_on, [False])
+        self.assertEqual(len(self.patch.store().ships('ship_test')), 1)
+
     def test_gui_page_installed(self):
         from module.webui.app import AlasGUI
         self.assertTrue(getattr(AlasGUI.set_aside, '__collected_wrapped__', False))

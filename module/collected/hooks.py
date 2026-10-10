@@ -93,16 +93,18 @@ def when_imported(name, callback):
         _callbacks.setdefault(name, []).append(callback)
 
 
-def wrap_method(cls, name, after, on_error=None):
+def wrap_method(cls, name, after=None, on_error=None, before=None):
     """
-    Wrap `cls.name` so `after(self, result, args, kwargs)` runs after each successful call.
-    The original return value is passed through and exceptions in `after` never escape.
+    Wrap `cls.name` so `before(self, args, kwargs)` runs before each call and
+    `after(self, result, args, kwargs)` runs after each successful call.
+    The original return value is passed through and exceptions in hooks never escape.
 
     Args:
         cls: Class that defines the method itself (not inherited).
         name (str):
         after (callable):
-        on_error (callable): Receives the exception raised by `after`.
+        on_error (callable): Receives the exception raised by a hook.
+        before (callable):
 
     Returns:
         bool: If wrapped.
@@ -115,9 +117,11 @@ def wrap_method(cls, name, after, on_error=None):
     if not callable(func) or getattr(func, _WRAPPED, False):
         return False
 
-    def call_after(instance, result, args, kwargs):
+    def call_hook(hook, *hook_args):
+        if hook is None:
+            return
         try:
-            after(instance, result, args, kwargs)
+            hook(*hook_args)
         except Exception as e:
             if on_error is not None:
                 on_error(e)
@@ -127,8 +131,9 @@ def wrap_method(cls, name, after, on_error=None):
     if is_static:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
+            call_hook(before, None, args, kwargs)
             result = func(*args, **kwargs)
-            call_after(None, result, args, kwargs)
+            call_hook(after, None, result, args, kwargs)
             return result
 
         setattr(wrapper, _WRAPPED, True)
@@ -136,8 +141,9 @@ def wrap_method(cls, name, after, on_error=None):
     else:
         @functools.wraps(func)
         def wrapper(self, *args, **kwargs):
+            call_hook(before, self, args, kwargs)
             result = func(self, *args, **kwargs)
-            call_after(self, result, args, kwargs)
+            call_hook(after, self, result, args, kwargs)
             return result
 
         setattr(wrapper, _WRAPPED, True)
